@@ -1,0 +1,17 @@
+{
+	"name":"SECS-II Spec"
+	, "patterns": {
+		"__main": [
+			  {"type":"BV", "size":4, "ref":"LEN"}
+			, {"type":"BK", "subs":[
+					  {"type":"BV", "size":2, "ref":"ssid"}
+					, {"type":"BV", "size":1, "ref":"hb2"}
+					, {"type":"BV", "size":1, "ref":"hb3"}
+					, {"type":"BV", "size":1, "ref":"ptype"}
+					, {"type":"BV", "size":1, "ref":"stype"}
+					, {"type":"BV", "size":4, "ref":"sb"}]}
+
+			, {"type":"BB", "size":"&LEN - 10", "ref":"msg"}
+		]
+	}
+}

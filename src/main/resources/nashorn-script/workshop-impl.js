@@ -1,0 +1,478 @@
+/**
+ * Created by jaeda on 2017. 2. 17..
+ */
+
+var __JAVA_TOOL = Java.type("guru.z3.knot.nashorn.JavaTool");
+var __JOOL_CONTEXT_TYPE = Java.type("guru.z3.knot.nashorn.JoolContext");
+var __JOOL_CONTEXT = __JOOL_CONTEXT_TYPE.getInstance();
+var __LOGGER = __JAVA_TOOL.getLogger();
+
+var __WORKSHOP_CONTEXT = Java.type("guru.z3.knot.WorkshopContext").getInstance();
+
+
+var __HELPERS = {
+    fixed: function(size) {
+        this.size = size;
+        this.func = function(bbuf, pos, offset) {
+            return offset >= this.size;
+        }
+    }
+    , 'BIGENDIAN_INT': function() {
+    	var num = 0;
+    	var sz = this.packBuf.length;
+		for ( var i = 0; i < sz; i++ )
+		{
+			num <<= 8;
+			num |= this.packBuf[i];
+		}
+
+		return num;
+	}
+	, 'DOUBLE': function() {
+		return new Float64Array(this.packBuf);
+	}
+	, 'ASCII': function() {
+		var str = '';
+		var sz = this.packBuf.length;
+		for ( var i = 0; i < sz; i++ ) str += String.fromCharCode(this.packBuf[i]);
+
+		return str;
+	}
+	, buf2HexString: function(arrBuf) {
+		var hex = arrBuf.map(function (val) {
+			var unsinged = val & 0xFF;
+			return (unsinged < 16) ? '0' + unsinged.toString(16) : unsinged.toString(16);
+		});
+
+		return '[' + hex.join(",") + ']';
+	}
+	, toHex: function(val) {
+		var unsinged = val & 0xFF;
+		return (unsinged < 16) ? '0' + unsinged.toString(16) : unsinged.toString(16);
+	}
+
+}
+
+var __VAR_MAP_STACK = new Array();
+var __VAR_MAP = function()
+{
+	return __VAR_MAP_STACK[__VAR_MAP_STACK.length - 1];
+}
+
+var __VAR_API = function(value)
+{
+	this.value = value;
+
+	this.toInt = function(radix)
+    {
+        return typeof(this.value) == "number" ? Math.floor(this.value) : parseInt(this.value, radix);
+    }
+
+    this.toFloat = function()
+    {
+	    return typeof(this.value) == "number" ? this.value : __JAVA_TOOL.parseFloat(this.value, radix);
+    }
+
+	this.toDouble = function()
+	{
+		return typeof(this.value) == "number" ? this.value : __JAVA_TOOL.parseDouble(this.value, radix);
+	}
+
+	this.raw = function()
+	{
+		return this.value;
+	}
+
+	return value;
+}
+
+var $V = function(name)
+{
+	for ( var i = __VAR_MAP_STACK.length - 1; i >= 0; i-- )
+	{
+		var vmap = __VAR_MAP_STACK[i];
+		var value = vmap[name];
+		if ( value !== undefined )
+		{
+			if ( __LOGGER.isTraceEnabled() )__LOGGER.trace("$V('{}')={}, typeof={}", name, value, typeof value);
+			return value;
+		}
+	}
+
+	if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("$V('{}')=null", name);
+	return undefined;
+}
+
+var $VAPI = function(name)
+{
+	return new __VAR_API($V(name));
+}
+
+var __NAMESPACE_DOWN = function() {
+	__VAR_MAP_STACK.push({});
+}
+
+var __NAMESPACE_UP = function() {
+	__VAR_MAP_STACK.pop({});
+}
+
+var __CALLBACKS = {
+
+    "assign": function(name, func) {
+    	var value = func.apply(this);
+	    __VAR_MAP()[name] = value;
+	    if ( __LOGGER.isDebugEnabled() ) __LOGGER.debug("Handler::assign {}:={}", name, value);
+    }
+	, "assign2": function(name, func) {
+    	var f = func.apply(this);
+		var value = f.apply(this);
+		__VAR_MAP()[name] = value;
+		if ( __LOGGER.isDebugEnabled() ) __LOGGER.debug("Handler::assign2 {}={}", name, value);
+	}
+	, "output": function(name, funcstr) {
+		if ( __LOGGER.isDebugEnabled() ) __LOGGER.debug("Handler::output {}.{}", name, funcstr);
+
+		var spec = this.spec;
+		var outputObj = spec.artifact.output[name];
+		if ( outputObj !== undefined )
+		{
+			outputObj.save($V('type'), $V('length'), $V('value'));
+		}
+	}
+}
+
+var __KNOT_API = {
+	/**
+	 * Call the function repeatedly a specified number of times.
+	 *
+	 * @param count number of times
+	 * @param func  function
+	 * @private
+	 */
+	__LOOP: function(count, func) {
+		for ( var i = 0; i < count; i++ )
+		{
+			print('loop func=' + func);
+			func();
+		}
+	}
+
+	/**
+	 * In user-defined specification, sequence is like template for packaging knots.
+	 * This function do operate sequence
+	 *
+	 * @param seqname sequence's name
+	 * @private
+	 */
+	, __SEQ: function(seqname) {
+		try
+		{
+			if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("__SEQ::seqname={}, craftsman={}", seqname, this.id);
+
+			var spec = this.spec;
+			var seq = spec.artifact.sequence[seqname];
+			if ( seq == undefined ) throw "Unspecified sequence, name=" + seqname;
+
+			// prepare namespace & drill down
+			__NAMESPACE_DOWN();
+
+			//
+			for ( var i = 0; i < seq.length; i++ )
+			{
+				JOOL.TT.newJool();
+
+				var knot = spec.artifact.knots[seq[i]];
+				var br;
+
+				if ( knot )
+				{
+					this.api.__KNOT(knot);
+				}
+				else if ( br = spec.artifact.branches[seq[i]] )
+				{
+					this.api.__BRANCH(br);
+				}
+			}
+		}
+		finally
+		{
+			// namespace drill up
+			__NAMESPACE_UP();
+		}
+	}
+
+	, __BRANCH: function(br) {
+		var brObj;
+		if ( typeof br == "string" )
+		{
+			var spec = this.spec;
+			brObj = spec.artifact.branches[br];
+			if ( brObj == undefined ) return;
+		}
+		else
+			brObj = br;
+
+		if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("__BRANCH::switch");
+		for ( var k = 0; k < brObj.length; k++ )
+		{
+			var cond = br[k].condition;
+			if ( cond )
+			{
+				var cresult = eval(cond);
+				if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("__BRANCH::cond:{} => {}", cond, cresult);
+				if ( cresult ) br[k].work.apply(this.spec);
+				else
+					continue;
+			}
+			else
+			{
+				if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("__BRANCH::else");
+				br[k].work.apply(this.spec);
+			}
+
+			break;
+		}
+	}
+
+	, __KNOT: function(knot) {
+		var knotObj;
+		if ( typeof knot == "string" )
+		{
+			var spec = this.spec;
+			knotObj = spec.artifact.knots[knot];
+		}
+		else
+			knotObj = knot;
+
+		var work = new UntieWork(knotObj);
+
+		while(true)
+		{
+			var bb = this.readTool.nioread();
+			if ( bb == -1 ) break;
+
+			var result = work.operable(bb);
+			if ( result )
+			{
+				work.operate();
+				break;
+			}
+		}
+	}
+
+	/**
+	 * You could get userlib function whose 'this' is set to Workshop.
+	 *
+	 * @param funcname
+	 * @private
+	 */
+	, __USERLIB: function(funcname) {
+		var spec = this.spec;
+		var func = spec.artifact.userLIB[funcname];
+
+		if ( func !== undefined )
+		{
+			return func.apply(this, Array.prototype.slice.call(arguments, 1));
+		}
+
+		throw "There is no userLIB:name=" + funcname;
+	}
+
+}
+
+
+//var KNOT = {};
+//var CRAFT = {};
+/**
+ * THis is a context manage in message unit
+ * @param spec
+ * @constructor
+ */
+var UntieJool = function(spec)
+{
+	this.CTX = {
+		mem: {
+			size: 0
+			, packBuf: []
+			, spec: spec
+		}
+		, newVal: 0
+
+		, size: function(sz) {
+			var packsz = this.mem.packBuf.length;
+			var result = packsz >= sz;
+			if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("operable::size, pack.size\{{}\} >= sz\{{}\} => {}", packsz, sz, result);
+			return result;
+		}
+		, pack: function() {
+			this.mem.packBuf[this.mem.packBuf.length] = this.newVal;
+			if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("operable::pack, new value=0x{}", __HELPERS.toHex(this.newVal));
+			return true;
+		}
+		, clear: function() {
+			this.mem.size = 0;
+			this.mem.packBuf.length = 0;
+			if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("operable::clear");
+		}
+	}
+
+	/**
+	 * New message context
+	 */
+	this.newJool = function()
+	{
+		this.CTX.clear();
+	}
+}
+
+
+
+var UntieWork = function(knot)
+{
+    this.knot = knot;
+    this.ready = undefined;
+
+    this.operable = function(bval)
+    {
+    	if ( this.knot.inbuf )
+	    {
+		    if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("UntieWork::inbuf sz={} ", this.knot.inbuf);
+
+		    with(JOOL.TT.CTX)
+		    {
+			    newVal = bval;
+		    	pack();
+		    	return size(typeof this.knot.inbuf === "function" ? this.knot.inbuf.apply() : this.knot.inbuf);
+		    }
+	    }
+    	else if ( this.knot.operable )
+	    {
+		    if ( __LOGGER.isDebugEnabled() ) __LOGGER.debug("UntieWork::operable cond={} ", this.knot.operable);
+
+	    	with(JOOL.TT.CTX)
+		    {
+		    	newVal = bval;
+		    	var ret = (typeof this.knot.operable === "function" ) ? this.knot.operable.apply() : eval(this.knot.operable);
+		    	print('operable result=' + ret);
+		    	return ret;
+		    }
+	    }
+
+		return true;
+    }
+
+    this.operate = function()
+    {
+    	if ( this.knot.handlers == undefined || this.knot.handlers.length == undefined ) return;
+	    if ( __LOGGER.isDebugEnabled() )
+	    {
+		    __LOGGER.debug("UntieWork::operate, buf={}", __HELPERS.buf2HexString(JOOL.TT.CTX.mem.packBuf));
+	    }
+
+    	for ( var i = 0; i < this.knot.handlers.length; i++ )
+	    {
+	        var h = this.knot.handlers[i];
+		    if ( __LOGGER.isTraceEnabled() ) __LOGGER.trace("UntieWork::operate, handler={}", h.name);
+
+	        var cb = __CALLBACKS[h.name];
+	        var value = cb.apply(JOOL.TT.CTX.mem, h.args);
+	    }
+    }
+}
+
+var JOOL = {}
+var Servant = function()
+{
+	this.spec = undefined;
+	this.machine = undefined;
+	this.running = false;
+
+	this.id = 'Servant';
+	this.api = {};
+	this.works = {};
+	this.workIndex = 0;
+	this.workDefs = {};     // handler 정의를 해석하고 관련코드를 준비한다
+
+
+	this.hello = function()
+	{
+		__LOGGER.info("Hello servant");
+	}
+
+	this.arrange = function()
+	{
+		this.spec = __WORKSHOP_CONTEXT.getProp().get("untie.specification");
+
+		// TODO simplify below codes
+		this.api.__SEQ      = __KNOT_API.__SEQ.bind(this);
+		this.api.__BRANCH   = __KNOT_API.__BRANCH.bind(this);
+		this.api.__KNOT     = __KNOT_API.__KNOT.bind(this);
+		this.api.__LOOP     = __KNOT_API.__LOOP;
+
+		this.api.__USERLIB  = __KNOT_API.__USERLIB.bind(this);
+
+		// 메모리 영역은 한 작업단위 메모리, 전역 메모리로 나뉜다.
+		JOOL.TT             = new UntieJool(this.spec);
+		JOOL.mem            = JOOL.TT.CTX.mem;
+		JOOL.api            = this.api;
+
+		//this.CRAFT          = { MEM:{} };
+
+		//this.machine = __JAVA_TOOL.poweron(this.spec);
+		__LOGGER.info("arrange info={}", JSON.stringify(this.spec.info));
+	}
+
+	this.untie = function(bb)
+	{
+		print('untie:' + bb);
+	}
+
+	this.stop = function()
+	{
+		__LOGGER.debug("servant::stop requested");
+		this.runnging = false;
+	}
+
+	this.working = function(readTool)
+	{
+		try
+		{
+			// ready to untie...
+			this.arrange();
+
+			this.running = true;
+			var bb = null;
+
+			this.readTool = readTool;
+			this.api.__SEQ([this.spec.artifact.starter]);
+
+			/*
+			while ( this.running )
+			{
+				bb = readTool.nioread();
+				if ( bb >= 0 ) this.untie(bb & 0xFF);
+				else if ( bb == -1 ) break;
+			}
+			*/
+		}
+		catch(e)
+		{
+			__LOGGER.error(e.getMessage(), e);
+		}
+
+		__LOGGER.debug("servant::working finished");
+	}
+}
+
+function linkServant()
+{
+	return new Servant();
+}
+
+function setup(name, spec)
+{
+	__WORKSHOP_CONTEXT.getProp().put(name, spec);
+	__LOGGER.info("setup {}={}", name, JSON.stringify(spec));
+}
+
+__LOGGER.info("Nashron script workshop loaded !!!");
