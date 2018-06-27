@@ -1,0 +1,8 @@
+{
+  "name": "temple.knot",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "debug": "~2.6.9"
+  }
+}

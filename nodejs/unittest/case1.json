@@ -1,0 +1,24 @@
+{
+  "knots":[
+    {
+      "size": 4,
+      "recipes": {
+        "ref": "LEN"
+      }
+    },
+    {
+      "size": 4,
+      "recipes": {
+        "ref": "command",
+        "mode": "ascii"
+      }
+    },
+    {
+      "size": 2,
+      "recipes": {
+        "ref": "bincom",
+        "mode": "bin.little_endian"
+      }
+    }
+  ]
+}
