@@ -3,15 +3,12 @@ package unittest.knot.nashorn;
 import guru.z3.temple.knot.CraftsMan;
 import guru.z3.temple.knot.Workshop;
 import guru.z3.temple.knot.Yarn;
-import guru.z3.temple.knot.nashorn.NashornCraftsMan;
 import guru.z3.temple.knot.nashorn.NashornCraftsManUnion;
-import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import org.junit.Test;
 
 import javax.script.Invocable;
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
@@ -27,9 +24,7 @@ public class TestNashornCraftsMan
 		//workshop.putCraftsMan("SECS2", secs2);
 
 		Yarn yarn = new MockHsmsYarn();
-		hsms.craft(yarn, Arrays.stream(new CraftsMan.WorkOption[]{}).collect(Collectors.toSet()));
-
-		try { Thread.sleep(60000); } catch (InterruptedException e) { }
+		hsms.unknit(yarn, Arrays.stream(new CraftsMan.WorkOption[]{}).collect(Collectors.toSet()));
 	}
 
 	@Test
@@ -47,6 +42,25 @@ public class TestNashornCraftsMan
 		{
 			throw e;
 		}
+
+	}
+
+	@Test
+	public void testStep1() throws Exception
+	{
+		Workshop workshop = new Workshop();
+		CraftsMan test = NashornCraftsManUnion.getInstance().ready(workshop, "HSMS", "/Users/jaeda/workspace/git/temple.knot/src/test/resources/test.step1.json");
+		//workshop.putCraftsMan("HSMS", hsms);
+		//workshop.putCraftsMan("SECS2", secs2);
+
+		Yarn yarn = new MockHsmsYarn();
+		test.unknit(yarn, Arrays.stream(new CraftsMan.WorkOption[]{}).collect(Collectors.toSet()));
+
+		Object value = workshop.getReferences().get("LEN");
+		System.out.println("value type=" + value.getClass().getName());
+		System.out.println("value=" + value);
+
+		test.knit(null, Arrays.stream(new CraftsMan.WorkOption[]{}).collect(Collectors.toSet()));
 
 	}
 }

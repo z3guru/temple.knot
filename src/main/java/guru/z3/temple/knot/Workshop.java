@@ -7,6 +7,7 @@ import java.util.Map;
 public class Workshop
 {
 	private Map<String, CraftsMan> men;
+	private final Map<String, Object> references = new HashMap();
 
 	public Workshop()
 	{
@@ -34,4 +35,9 @@ public class Workshop
 		this.men.get(name);
 	}
 
+	// GETTER/SETTER methods =====================
+	public Map<String, Object> getReferences()
+	{
+		return references;
+	}
 }

@@ -10,5 +10,7 @@ public interface CraftsMan
 {
 	public enum WorkOption { RESET }
 
-	public void craft(Yarn yarn, Set<WorkOption> options) throws IOException;
+	public void knit(Fabric yarn, Set<WorkOption> options) throws IOException;
+
+	public void unknit(Yarn yarn, Set<WorkOption> options) throws IOException;
 }

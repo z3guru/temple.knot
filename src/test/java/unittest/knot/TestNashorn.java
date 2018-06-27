@@ -15,11 +15,11 @@ public class TestNashorn
 		ScriptEngineManager engineManager = new ScriptEngineManager();
 		ScriptEngine engine = engineManager.getEngineByName("nashorn");
 
-		// parse JSON
+		// unknit JSON
 		ScriptObjectMirror json = (ScriptObjectMirror)engine.eval("JSON");
 
 		String data = "{\"name\":\"ZCUBE\"}";
-		ScriptObjectMirror parsed = (ScriptObjectMirror)json.callMember("parse", data);
+		ScriptObjectMirror parsed = (ScriptObjectMirror)json.callMember("unknit", data);
 
 		// binding
 		engine.put("spec", parsed);
