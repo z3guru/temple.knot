@@ -1,3 +1,5 @@
+const EventEmitter = require('events');
+
 class Workshop
 {
 	static createWorkshop(spec)
@@ -23,6 +25,7 @@ class Workshop
 
 const YARN_LITTLE_ENDIAN    = 0;
 const YARN_BIG_ENDIAN       = 1;
+
 
 class Yarn
 {
@@ -280,7 +283,7 @@ class KnitProcess
 			// check last state..
 			this._state = next;
 			if ( (next + 1) >= this._tools.length ) {
-				//this.notifyEnd();
+				//this.notifyStich();
 				//this.resetState();
 
 				return;
@@ -289,13 +292,27 @@ class KnitProcess
 	}
 }
 
+const UNKNIT_STATE_INIT     = 0;
+
 class UnknitProcess
 {
-	constructor()
+	/**
+	 * @param ee    a eventEmitter function to be called when a transaction of a communication will be ended
+	 */
+	constructor(ee)
 	{
 		this._tools = [];
-		this._state = -1;
 		this._ref = {};
+
+		this._state = UNKNIT_STATE_INIT;
+
+		/** stich sequence number */
+		this._seq = 0;
+
+		/** a information of current stich */
+		this._stich = undefined;
+
+		this.eventEmitter = ee;
 	}
 
 	prepare(knots)
@@ -314,45 +331,70 @@ class UnknitProcess
 	resetState()
 	{
 		this._state = -1;
+		this._stich = {
+			  seq: this._seq++
+			, refmap: { }
+		}
+
+		this.notifyStich(false);
 	}
 
-	notifyEnd()
+	get eventEmitter() { return this._eventEmitter; }
+	set eventEmitter(ee)
 	{
-
+		if ( ee instanceof EventEmitter ) this._eventEmitter = ee;
+		else
+			throw "A parameter be inherited from 'UnknitCallback' class";
 	}
 
-	notifyError()
+	notifyStich(isend)
 	{
-
+		if ( isend ) this._eventEmitter.emit("stichStart", this._stich);
+		else
+			this._eventEmitter.emit("stichEnd", this._stich)
 	}
 
+	notifyError(ecode, msg)
+	{this._eventEmitter.emit("stichError", ecode, msg);
+	}
+
+	/**
+	 *
+	 * @param yarn
+	 * @param refmap
+	 * @returns {boolean}
+	 */
 	execute(yarn, refmap)
 	{
-		while(true)
+		while ( this._state < this.tools.length )
 		{
-			var next = this._state + 1;
-			if ( next >= this._tools.length )
+			if ( this._state == UNKNIT_STATE_INIT )
 			{
-				this.notifyError();
 				this.resetState();
-				next = 0;
 			}
 
+			var step = this._state;
+
 			// check size for verifying whether all data is prepared.
-			var sz = this._tools[next].needSize;
+			var sz = this._tools[step].needSize;
 			if (yarn.remaining() < sz) return false;
 
 			// run
-			var ctx = {size: sz, ref: refmap === undefined ? this._ref : refmap};
-			this._tools[next].run(ctx, yarn);
+			var ctx = {size: sz, ref: this._stich.refmap};
+			this._tools[step].run(ctx, yarn);
 
 			// check last state..
-			this._state = next;
-			if ( (next + 1) >= this._tools.length ) {
-				this.notifyEnd();
-				this.resetState();
+			this._state++;
+			if ( this._state >= this._tools.length )
+			{
+				this.notifyStich(true);
 			}
 		}
+	}
+
+	_checkEnd()
+	{
+
 	}
 }
 
@@ -537,9 +579,12 @@ var $KnitFunctions = {
 
 
 module.exports = {
-	setupWorkshop: function(spec)
+	version: "0.1"
+
+	, setupWorkshop: function(spec)
 	{
 		return Workshop.createWorkshop(spec);
 	}
+
 	, Yarn:Yarn
 }
