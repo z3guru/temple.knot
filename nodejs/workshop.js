@@ -2,10 +2,10 @@ const EventEmitter = require('events');
 
 class Workshop
 {
-	static createWorkshop(spec)
+	static createWorkshop(spec, ee)
 	{
 		var ws = new Workshop();
-		ws.unknitProcess = new UnknitProcess();
+		ws.unknitProcess = new UnknitProcess(ee);
 		ws.unknitProcess.prepare(spec.knots);
 
 		ws.knitProcess = new KnitProcess();
@@ -330,7 +330,7 @@ class UnknitProcess
 
 	resetState()
 	{
-		this._state = -1;
+		this._state = UNKNIT_STATE_INIT;
 		this._stich = {
 			  seq: this._seq++
 			, refmap: { }
@@ -342,7 +342,7 @@ class UnknitProcess
 	get eventEmitter() { return this._eventEmitter; }
 	set eventEmitter(ee)
 	{
-		if ( ee instanceof EventEmitter ) this._eventEmitter = ee;
+		if ( ee instanceof UnknitCallback ) this._eventEmitter = ee;
 		else
 			throw "A parameter be inherited from 'UnknitCallback' class";
 	}
@@ -366,7 +366,7 @@ class UnknitProcess
 	 */
 	execute(yarn, refmap)
 	{
-		while ( this._state < this.tools.length )
+		while ( this._state < this._tools.length )
 		{
 			if ( this._state == UNKNIT_STATE_INIT )
 			{
@@ -577,14 +577,16 @@ var $KnitFunctions = {
 
 }
 
+class UnknitCallback extends EventEmitter {}
 
 module.exports = {
 	version: "0.1"
 
-	, setupWorkshop: function(spec)
+	, setupWorkshop: function(spec, ee)
 	{
-		return Workshop.createWorkshop(spec);
+		return Workshop.createWorkshop(spec, ee);
 	}
 
 	, Yarn:Yarn
+	, UnknitCallback:UnknitCallback
 }
