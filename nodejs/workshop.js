@@ -1,11 +1,82 @@
 const EventEmitter = require('events');
 
+const __recipes = {
+
+	"checksum.crc16": {
+		"crc16":{
+			"hook":function(ctx, yarn) {
+				let stich = ctx.stich;
+				let checksum = stich.__crc16_checksum;
+
+				while ( yarn.hasRemaining() )
+				{
+					checksum += yarn.get();
+				}
+			},
+		},
+	},
+
+	"bin":{
+		"big_endian": {
+			"knit": function (ctx, yarn) {
+				ctx.value = yarn.getUInt(ctx.size);
+				console.log("bin.big_endian, sz=" + ctx.size + ", value=" + ctx.value);
+				return ctx.value;
+			},
+
+			"unknit": function (ctx, yarn) {
+				yarn.putUInt(ctx.value, ctx.size);
+				console.log("bin.big_endian, sz=" + ctx.size + ", value=" + ctx.value);
+			},
+		},
+		"little_endian": {
+			"knit":function(ctx, yarn) {
+				yarn.order = YARN_LITTLE_ENDIAN;
+				ctx.value = yarn.getUInt(ctx.size);
+				console.log("bin.little_endian, sz=" + ctx.size + ", value=" + ctx.value);
+				return 0;
+			},
+
+			"unknit":function(ctx, yarn) {
+				yarn.order = YARN_LITTLE_ENDIAN;
+				yarn.putUInt(ctx.value, ctx.size);
+				console.log("bin.little_endian, sz=" + ctx.size + ", value=" + ctx.value);
+			},
+		},
+	},
+
+
+	"ascii":{
+		"knit":function(ctx, yarn) {
+			ctx.value = 0;
+			yarn.skip(ctx.size);
+			console.log("ascii, sz=" + ctx.size);
+			return 0;
+		},
+
+		"unknit": function(ctx, yarn) {
+			ctx.value = 0;
+			yarn.skip(ctx.size);
+			console.log("ascii, sz=" + ctx.size);
+		},
+	},
+	"assign": {
+		"knit":function(name, ctx) {
+			ctx.ref[name] = ctx.value;
+		},
+
+		"unknit": function(name, ctx) {
+			ctx.value = ctx.ref[name];
+		}
+	},
+};
+
 class Workshop
 {
 	static createWorkshop(spec, ee)
 	{
 		var ws = new Workshop();
-		ws.unknitProcess = new UnknitProcess(ee);
+		ws.unknitProcess = new Process(ee);
 		ws.unknitProcess.prepare(spec.knots);
 
 		ws.knitProcess = new KnitProcess();
@@ -22,6 +93,14 @@ class Workshop
 
 };
 
+class CraftsMan
+{
+	prepare(spec, ee)
+	{
+		this._knitProcess = new KnitProcess();
+		this._knitProcess.prepare(spec.knots);
+	}
+}
 
 const YARN_LITTLE_ENDIAN    = 0;
 const YARN_BIG_ENDIAN       = 1;
@@ -29,12 +108,20 @@ const YARN_BIG_ENDIAN       = 1;
 
 class Yarn
 {
-	constructor(sz)
+	/**
+	 *
+	 * @param param a size of a buffer OR a buffer from Buffer
+	 */
+	constructor(param, order)
 	{
-		this._buf = new Buffer(sz);
+		if ( param instanceof Buffer ) this._buf = param;
+		else if ( typeof(param) === "number") this._buf = new Buffer(param);
+		else
+			throw "invalid parameters";
+
 		this._mark = this._position = 0;
 		this._limit = this._buf.length;
-		this.order = YARN_BIG_ENDIAN;
+		this.order = order === undefined ? YARN_BIG_ENDIAN : order;
 	}
 
 	static allocate(sz)
@@ -50,7 +137,6 @@ class Yarn
 		return yarn;
 	}
 
-
 	get capacity() { return this._buf.length; }
 
 	get limit() { return this._limit }
@@ -60,7 +146,7 @@ class Yarn
 	set position(val) { this._position = val; }
 
 	remaining() { return this._limit - this._position; }
-
+	hasRemaining() { return this.remaining() > 0; }
 
 	put(b)
 	{
@@ -182,14 +268,19 @@ class Yarn
 
 	clear()
 	{
-		this._position = 0;
+		this._mark = this._position = 0;
 		this._limit = this.buf.length;
 	}
 
 	flip()
 	{
 		this._limit = this._position;
-		this._position = 0;
+		this._mark = this._position = 0;
+	}
+
+	rewind()
+	{
+		this._mark = this._position = 0;
 	}
 
 	mark()
@@ -200,11 +291,6 @@ class Yarn
 	reset()
 	{
 		this._position = this._mark;
-	}
-
-	rewind()
-	{
-		this._position = this._mark = 0;
 	}
 
 	compact()
@@ -220,7 +306,189 @@ class Yarn
 		this._position += sz;
 	}
 
+	cut(sz)
+	{
+		let piece = new Yarn(this._buf, this.order);
+		piece._position = this._position;
+		piece._limit = this._position + sz;
+
+		return piece;
+	}
 }
+
+class Tool
+{
+	constructor(knot)
+	{
+		this._needSize = this._compileNeedSize(knot.size);
+		this._functions = this._compileFunctions(knot.recipes);
+	}
+
+	run(ctx, yarn)
+	{
+		var piece = yarn.cut(ctx.size);
+		piece.mark();
+
+		for ( var i = 0; i < this._functions.length; i++ )
+		{
+			this._functions[i](ctx, piece);
+			piece.reset();
+		}
+	}
+
+	//  TODO cacheable
+	get needSize() { return this._needSize(); }
+
+
+	/**
+	 *
+	 * @param sz a definition of a size
+	 * @private
+	 */
+	_compileNeedSize(sz)
+	{
+		if ( isNaN(sz) )
+		{
+
+		}
+		else
+			return function() { return sz; }
+	}
+
+	_compileFunctions(recipes)
+	{
+		var func = [];
+
+		// if "ref" is defined, data have to be parsed into a value
+		if ( recipes.mode === undefined && recipes.ref !== undefined )
+		{
+			recipes.mode = "bin.big_endian"; // TODO have to be set by default.
+		}
+
+		// 1st function is getting a value
+		if ( recipes.mode !== undefined )
+		{
+			var f = $knotFunctions[recipes.mode];
+			func.push(f.bind(this));
+		}
+
+		// 2nd, ref
+		var ref = recipes.ref;
+		if ( ref !== undefined )
+		{
+			func.push($knotFunctions["assign"].bind(this, ref));
+		}
+
+		return func;
+	}
+
+}
+
+class Process
+{
+	/**
+	 * @param ee    a _notifier function to be called when a transaction of a communication will be ended
+	 */
+	constructor(ee)
+	{
+		this._tools = [];
+		this._ref = {};
+
+		this._state = UNKNIT_STATE_INIT;
+
+		/** stich sequence number */
+		this._seq = 0;
+
+		/** a information of current stich */
+		this._stich = undefined;
+
+		this._notifier = ee;
+	}
+
+	prepare(knots)
+	{
+		for ( var i = 0; i < knots.length; i++ )
+		{
+			this.addTool(new Tool(knots[i]));
+		}
+	}
+
+	addTool(tool)
+	{
+		this._tools.push(tool);
+	}
+
+	resetState()
+	{
+		this._state = UNKNIT_STATE_INIT;
+		this._stich = {
+			seq: this._seq++
+			, refmap: { }
+		}
+
+		this.notifyStich(false);
+	}
+
+	get _notifier() { return this._eventEmitter; }
+	set _notifier(ee)
+	{
+		if ( ee instanceof UnknitCallback ) this._eventEmitter = ee;
+		else
+			throw "A parameter be inherited from 'UnknitCallback' class";
+	}
+
+	notifyStich(isend)
+	{
+		if ( isend ) this._eventEmitter.emit("stichStart", this._stich);
+		else
+			this._eventEmitter.emit("stichEnd", this._stich)
+	}
+
+	notifyError(ecode, msg)
+	{
+		this._eventEmitter.emit("stichError", ecode, msg);
+	}
+
+	/**
+	 *
+	 * @param yarn
+	 * @param refmap
+	 * @returns {boolean}
+	 */
+	execute(yarn, refmap)
+	{
+		while ( this._state < this._tools.length )
+		{
+			if ( this._state == UNKNIT_STATE_INIT )
+			{
+				this.resetState();
+			}
+
+			var step = this._state;
+
+			// check size for verifying whether all data is prepared.
+			var sz = this._tools[step].needSize;
+			if (yarn.remaining() < sz) return false;
+
+			// run
+			var ctx = {size:sz, stich:this._stich, ref:this._stich.refmap};
+			this._tools[step].run(ctx, yarn);
+
+			// check last state..
+			this._state++;
+			if ( this._state >= this._tools.length )
+			{
+				this.notifyStich(true);
+			}
+		}
+	}
+
+	_checkEnd()
+	{
+
+	}
+}
+
 
 
 class KnitProcess
@@ -297,7 +565,7 @@ const UNKNIT_STATE_INIT     = 0;
 class UnknitProcess
 {
 	/**
-	 * @param ee    a eventEmitter function to be called when a transaction of a communication will be ended
+	 * @param ee    a _notifier function to be called when a transaction of a communication will be ended
 	 */
 	constructor(ee)
 	{
