@@ -1,0 +1,28 @@
+{
+  "pattern": {
+    "TEST": {
+      "knots":[
+        {
+          "method":{"size": 4, "mode":"bin.little_endian"},
+          "recipes": {
+            "ref": "LEN"
+          }
+        },
+        {
+          "size": 4,
+          "recipes": {
+            "ref": "command",
+            "mode": "ascii"
+          }
+        },
+        {
+          "size": 2,
+          "recipes": {
+            "ref": "bincom",
+            "mode": "bin.little_endian"
+          }
+        }
+      ]
+    }
+  }
+}
