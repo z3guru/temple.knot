@@ -1,0 +1,19 @@
+{
+  "environment":{
+    "version":"1.0"
+    , "protocol":"NONE"
+    , "comments":"This is a json file for testing environment section"
+    , "author":"ZCUBE"
+    , "licenced":"CC-BY"
+  }
+  ,
+  "textures":{
+    "T1":{"process":[ "PP1" ], "comments":"Test..."}
+    , "T2":{"process":[ "PP1" ], "comments":"Test..."}
+  }
+  ,
+  "tools":{
+    "PP1":{"chunk":{"method":"bytes", "size":4}, "flow":[{"syntax":"bin.b2[:1]b2[:0]", "refid":"VAR1"}]}
+    , "PP2":{"chunk":{"method":"bytes", "size":8}, "flow":[{"syntax":"bin.b2[:1]b2[:0]", "refid":"VAR1"}]}
+  }
+}

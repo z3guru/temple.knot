@@ -77,10 +77,10 @@ class Workshop
 	{
 		var ws = new Workshop();
 		ws.unknitProcess = new Process(ee);
-		ws.unknitProcess.prepare(spec.knots);
+		ws.unknitProcess.ready(spec.knots);
 
 		ws.knitProcess = new KnitProcess();
-		ws.knitProcess.prepare(spec.knots);
+		ws.knitProcess.ready(spec.knots);
 
 		return ws;
 	}
@@ -470,7 +470,7 @@ class Process
 			var sz = this._tools[step].needSize;
 			if (yarn.remaining() < sz) return false;
 
-			// run
+			// unknit
 			var ctx = {size:sz, stich:this._stich, ref:this._stich.refmap};
 			this._tools[step].run(ctx, yarn);
 
@@ -544,7 +544,7 @@ class KnitProcess
 			var sz = this._tools[next].needSize;
 			if (yarn.remaining() < sz) return false;
 
-			// run
+			// unknit
 			var ctx = {size: sz, ref: refmap === undefined ? this._ref : refmap};
 			this._tools[next].run(ctx, yarn);
 
@@ -647,7 +647,7 @@ class UnknitProcess
 			var sz = this._tools[step].needSize;
 			if (yarn.remaining() < sz) return false;
 
-			// run
+			// unknit
 			var ctx = {size: sz, ref: this._stich.refmap};
 			this._tools[step].run(ctx, yarn);
 

@@ -19,9 +19,9 @@ class Stitch
 
 		let refcount = this._cman.refTable.refcount || 0;
 		this._refidx = new Array(refcount).fill([0]);
-		this._refmem = new Array(refcount).fill([]);
+		this._refmem = new Array(refcount);
 
-		this._knotStack = [];
+		this._toolStack = [];
 		this._state = 0;
 	}
 
@@ -58,15 +58,27 @@ class Stitch
 
 	refmemByNum(refnum)
 	{
-		return this._refmem[refnum];
+		let mem = this._refmem[refnum];
+		if ( mem === undefined ) mem = this._refmem[refnum] = [];
+		return mem;
 	}
 
-	get knotStack() { return this._knotStack; }
+	get toolStack() { return this._toolStack; }
 	get isDone() { return false; /* TODO implements */ }
 
-	_calcCycleOffset(refnum, cycle)
+	setRefValue(refnum, value, idx, cycle)
 	{
-		
+		let vmap = this.refmemByNum(refnum);
+		let vidx = this.nextRefidx(refnum, idx, cycle);
+		vmap[vidx] = value;
+	}
+
+	// TODO default value
+	getRefValue(refnum, idx, cycle)
+	{
+		let vmap = this.refmemByNum(refnum);
+		let vidx = this.nextRefidx(refnum, idx, cycle);
+		return vmap[vidx];
 	}
 }
 
@@ -147,35 +159,115 @@ class CraftsMan
 }
 
 
-class Workshop extends nio.IOApplication
+const __PROCESS_STATE = { NONE:-1, RUN:1, DONE:0, ERROR:-2 };
+class Process
 {
-	static setupWorkshop(spec, craftsman)
+	constructor()
 	{
-		var ws = new Workshop(spec, craftsman);
-		return ws;
+		this._state = Process.State.NONE;
+		this._tools = [];
 	}
 
-	constructor(spec, cman)
-	{
-		this._env = spec.environment;
+	static get State() { return __PROCESS_STATE; }
+	get state() { return this._state; }
+	get tools() { return this._tools; }
 
-		// ready knot tool...
-		this._tools = {};
-		for ( let id in spec.tools )
+	static ready(workshop, spec)
+	{
+		let ps = new Process();
+
+		try
 		{
-			let toolSpec = spec.tools[id];
-			this._tools[id] = Tool.ready(cman, toolSpec);
+			for ( let k = 0; k < spec.process.length; k++ )
+			{
+				let toolId = spec.process[k];
+				ps._tools.push(workshop.toolMap[toolId]);
+			}
+		}
+		catch(e)
+		{
+		}
+
+		return ps;
+	}
+
+	unknit(cman, skein)
+	{
+		let stitch = cman.stitch;
+
+		// if not yet initialized, push tools into stack...
+		switch(this._state)
+		{
+			case Process.State.NONE:
+			case Process.State.DONE:
+				for ( let k = this._tools.length - 1; k >= 0; k-- ) stitch.toolStack.push(this._tools[k]);
+				this._state = Process.State.RUN;
+				break;
 		}
 
 		//
-		this._textures = spec.textures;
+		try
+		{
+			while ( stitch.toolStack.length > 0 )
+			{
+				let tool = stitch.toolStack.pop();
+				if ( !tool.unknit(cman, skein) /* done is false */ ) break;
+			}
+		}
+		catch(e)
+		{
+			this._state = Process.State.ERROR;
+		}
+		finally
+		{
+			// if there is not tool in statck, process's working is done.
+			if ( stitch.toolStack.length == 0 ) this._state = Process.State.DONE;
+		}
+	}
+}
+
+class Workshop
+{
+	static setupWorkshop(spec, craftsman)
+	{
+		var ws = new Workshop(craftsman);
+
+		// store environment...
+		ws._env = spec.environment;
+
+		// ready knot tool... ==============================
+		ws._toolMap = {};
+		for ( let id in spec.tools )
+		{
+			let toolSpec = spec.tools[id];
+			ws._toolMap[id] = Tool.ready(ws, toolSpec);
+		}
+		// lazy inherit
+		Object.values(ws.toolMap).forEach(function(t) {
+			t.lazyExtends(ws.toolMap);
+		});
+
+		//
+		//this._textures = spec.textures;
+		ws._processMap = {};
+		for ( let id in spec.textures )
+		{
+			ws._processMap[id] = Process.ready(ws, spec.textures[id]);
+		}
+
+		return ws;
+	}
+
+	constructor(cman)
+	{
 		//
 		this._craftsman = cman;
 	}
 
 	get env() { return this._env; }
-	get tools() { return this._tools; }
-	get textures() { return this._textures; }
+	get toolMap() { return this._toolMap; }
+	get processMap() { return this._processMap; }
+	get craftsman() { return this._craftsman; }
 
 	knit(tid, skein)
 	{
@@ -196,135 +288,221 @@ class Workshop extends nio.IOApplication
 		})
 	}
 
-	unknit(tid, skein)
+	unknit(pid, skein)
 	{
-		var stitch = this._craftsman.stitch;
+		let stitch = this._craftsman.stitch;
 		if ( stitch === undefined || stitch.isDone )
 		{
-			stitch = this._craftsman.newStitch();
+			this._craftsman.newStitch();
 		}
 
-		var knot = stitch.knotStack.pop();
-		knot.unknit(stitch, skein);
-
-		this._craftsman.newStitch();
-		let t = this._textures[tid];
-		let that = this;
-		t.process.forEach(function(id) {
-			that._tools[id].unknit(that._craftsman, skein);
-		})
+		let ps = this._processMap[pid];
+		ps.unknit(this._craftsman, skein);
 	}
 }
 
-class Process
+const SpecMethodHelper =
 {
-	/**
-	 * @param ee    a _notifier function to be called when a transaction of a communication will be ended
-	 */
-	constructor(cman)
-	{
-		this._knitTools = [];
-		this._unknitTools = [];
-		this._cman = cman;
+	methodFunc: function(m) {
 
-		/** a information of current stich */
-		this._stich = undefined;
-
-		/** */
-		this._ref = {};
-		//this._state = UNKNIT_STATE_INIT;
-
-		/** stich sequence number */
-		this._seq = 0;
-		//this._notifier = ee;
-	}
-
-	ready(spec)
-	{
-		let knots = spec.knots;
-		if ( knots === undefined ) throw "There is no knots";
-
-		for ( var i = 0; i < knots.length; i++ )
+		if ( m.startsWith("bit") )
 		{
-			//this.addTool(new Tool(knots[i]));
-			this._knitTools.push(new Tool(knots[i], MODE_KNIT));
-			this._unknitTools.push(new Tool(knots[i], MODE_UNKNIT));
+			let detail = m.substring(m.indexOf('.') + 1);
+			let tokens = /\s*(([bB])\s*\(\s*(\d+)\s*,\s*(\d+)\s*\))\s*/.exec(detail);
+
+
 		}
-	}
-
-	addTool(tool)
-	{
-		this._tools.push(tool);
-	}
-
-	resetState()
-	{
-		this._state = UNKNIT_STATE_INIT;
-		this._stich = {
-			seq: this._seq++
-			, refmap: { }
-		}
-
-		this.notifyStich(false);
-	}
-
-	get _notifier() { return this._eventEmitter; }
-	set _notifier(ee)
-	{
-		if ( ee instanceof UnknitCallback ) this._eventEmitter = ee;
 		else
-			throw "A parameter be inherited from 'UnknitCallback' class";
+			return __knot_libs[spec.method];
 	}
+};
 
-	notifyStich(isend)
-	{
-		if ( isend ) this._eventEmitter.emit("stichStart", this._stich);
-		else
-			this._eventEmitter.emit("stichEnd", this._stich)
-	}
+var __tool_libs = {
 
-	notifyError(ecode, msg)
+	parseFlow: function(cman, spec)
 	{
-		this._eventEmitter.emit("stichError", ecode, msg);
-	}
-
-	/**
-	 *
-	 * @param skein
-	 * @param refmap
-	 * @returns {boolean}
-	 */
-	execute(skein, refmap)
-	{
-		while ( this._state < this._tools.length )
+		if ( typeof spec === "string" )
 		{
-			if ( this._state == UNKNIT_STATE_INIT )
+
+		}
+		else if ( spec.syntax !== undefined )
+		{
+			// KNOT
+			return Knot.ready(cman, spec);
+		}
+	},
+}
+
+
+class Tool
+{
+	constructor(spec)
+	{
+		this._spec = spec;
+	}
+
+	static ready(ws, spec, mode)
+	{
+		let tool = new Tool(spec);
+
+		tool._log = spec.log;
+
+		// inherits ==========
+		if ( spec.extends )
+		{
+			tool._extends = spec.extends;
+		}
+
+		// subtools ==========
+		if ( spec.subtools )
+		{
+			tool._subtools = [];
+			spec.subtools.forEach(function(e) { tool._subtools.push(Tool.ready(ws, e)); });
+		}
+		// chunk =============
+		if ( spec.chunk )
+		{
+			tool._chunkModule = ChunkModuleKit.setup(spec.chunk);
+		}
+
+		// knots =============
+		tool._knots = [];
+		if ( spec.knots && spec.knots.length )
+		{
+			for ( var i = 0; i < spec.knots.length; i++ )
 			{
-				this.resetState();
-			}
-
-			var step = this._state;
-
-			// check size for verifying whether all data is prepared.
-			var sz = this._tools[step].needSize;
-			if (skein.remaining() < sz) return false;
-
-			// unknit
-			var ctx = {size:sz, stich:this._stich, ref:this._stich.refmap};
-			this._tools[step].run(ctx, skein);
-
-			// check last state..
-			this._state++;
-			if ( this._state >= this._tools.length )
-			{
-				this.notifyStich(true);
+				tool._knots.push(__tool_libs.parseFlow(ws.craftsman, spec.knots[i]));
 			}
 		}
+
+		// if knots and no chunk ==
+		if ( tool._chunkModule === undefined && tool._knots.length > 0 )
+		{
+			let sz = 0;
+			tool._knots.forEach(function(t) { sz += t.minimum; });
+			tool._chunkModule = ChunkModuleKit.setup({method:"bytes", size:sz});
+		}
+
+		return tool;
 	}
 
-	_checkEnd()
-	{
+	get knots() { return this._knots; }
+	get subtools() { return this._subtools; }
+	get superTool() { return this._superTool; }
+	get chunkModule() { return this._chunkModule; }
+	get log() { return this._log; }
 
+	_chunk(cman, skein)
+	{
+		return this._chunkModule.chunk(cman, skein)
+	}
+
+	lazyExtends(toolMap)
+	{
+		if ( this._extends ) this._superTool = toolMap[this._extends];
+		if ( this._subtools )
+		{
+			this._subtools.forEach(function(t) { t.lazyExtends(toolMap); });
+		}
+	}
+
+	knit(cman, skein)
+	{
+		let log = this._log || (this._superTool ? this._superTool.log : undefined);
+		if ( log ) console.log(log);
+
+		return this._knit(cman, skein);
+	}
+
+	unknit(cman, skein)
+	{
+		let log = this._log || (this._superTool ? this._superTool.log : undefined);
+		if ( log ) console.log(log);
+
+		// if use chunk?, then subtools must unknit of chunked subskein.
+		let subskein = skein;
+		let chunkModule = this._chunkModule || (this._superTool ? this._superTool.chunkModule : undefined);
+		if ( chunkModule )
+		{
+			subskein = chunkModule.chunk(cman, skein);
+			if ( subskein === undefined ) return false;
+		}
+
+		let result = this._unknit(cman, subskein);
+
+		//
+		if ( result )
+		{
+			let subtools = this._subtools || (this._superTool ? this._superTool.subtools : undefined);
+			if ( subtools )
+			{
+				let stitch = cman.stitch;
+				subtools.reverse().forEach(function(t) { stitch.toolStack.push(t); })
+			}
+		}
+
+		return result;
+
+		/*
+		var pieceBuf = this._chunk(cman, skein);
+		for ( var i = 0; i < this._flow.length; i++ )
+		{
+			this._flow[i].unknit(cman, pieceBuf);
+		}
+		*/
+	}
+
+	_knit(cman, skein)
+	{
+		let knots = this._knots || (this._superTool ? this._superTool.knots : undefined);
+		if ( knots )
+		{
+			knots.forEach(function(k) {
+				k.knit(cman, skein);
+			});
+		}
+
+		return true;
+	}
+
+	_unknit(cman, skein)
+	{
+		let knots = this._knots || (this._superTool ? this._superTool.knots : undefined);
+		if ( knots )
+		{
+			knots.forEach(function(k) {
+				k.unknit(cman, skein);
+			});
+		}
+
+		return true;
+	}
+
+	_compileFunctions(recipes)
+	{
+		var func = [];
+
+		// if "ref" is defined, data have to be parsed into a value
+		if ( recipes.mode === undefined && recipes.ref !== undefined )
+		{
+			recipes.mode = "bin.big_endian"; // TODO have to be set by default.
+		}
+
+		// 1st function is getting a value
+		if ( recipes.mode !== undefined )
+		{
+			var f = $knotFunctions[recipes.mode];
+			func.push(f.bind(this));
+		}
+
+		// 2nd, ref
+		var ref = recipes.ref;
+		if ( ref !== undefined )
+		{
+			func.push($knotFunctions["assign"].bind(this, ref));
+		}
+
+		return func;
 	}
 }
 
@@ -332,31 +510,31 @@ class Process
 
 const __knot_libs = {
 	"bin.big_endian": {
-			"knit": function (skein, sz, val) {
-				skein.putUInt(val, sz);
-				console.log("bin.big_endian, sz=" + sz + ", value=" + val);
-			},
+		"knit": function (skein, sz, val) {
+			skein.putUInt(val, sz);
+			console.log("bin.big_endian, sz=" + sz + ", value=" + val);
+		},
 
-			"unknit": function (skein, sz) {
-				let val = skein.getUInt(sz);
-				console.log("bin.big_endian, sz=" + sz + ", value=" + val);
-				return val;
-			},
+		"unknit": function (skein, sz) {
+			let val = skein.getUInt(sz);
+			console.log("bin.big_endian, sz=" + sz + ", value=" + val);
+			return val;
+		},
 	}
 	,
 	"bin.little_endian": {
-			"knit":function(cman, skein, sz) {
-				skein.order = YARN_LITTLE_ENDIAN;
-				cman.value = skein.getUInt(sz);
-				console.log("bin.little_endian, sz=" + sz + ", value=" + cman.value);
-				return 0;
-			},
+		"knit":function(cman, skein, sz) {
+			skein.order = YARN_LITTLE_ENDIAN;
+			cman.value = skein.getUInt(sz);
+			console.log("bin.little_endian, sz=" + sz + ", value=" + cman.value);
+			return 0;
+		},
 
-			"unknit":function(cman, skein, sz) {
-				skein.order = YARN_LITTLE_ENDIAN;
-				skein.putUInt(cman.value, sz);
-				console.log("bin.little_endian, sz=" + sz + ", value=" + cman.value);
-			},
+		"unknit":function(cman, skein, sz) {
+			skein.order = YARN_LITTLE_ENDIAN;
+			skein.putUInt(cman.value, sz);
+			console.log("bin.little_endian, sz=" + sz + ", value=" + cman.value);
+		},
 	}
 	,
 	"bit": {
@@ -382,23 +560,53 @@ const __knot_libs = {
 			return BinaryKnot.parse(cman, defstr);
 		}
 	}
-}
+	,
 
-const SpecMethodHelper =
-{
-	methodFunc: function(m) {
+	parseConst: function(spec)
+	{
+		if ( spec === undefined ) return undefined;
+		if ( !Array.isArray(spec)) throw "const must be array";
+		if ( spec.length == 0 ) return undefined;
 
-		if ( m.startsWith("bit") )
+		let _const = [];
+
+		try
 		{
-			let detail = m.substring(m.indexOf('.') + 1);
-			let tokens = /\s*(([bB])\s*\(\s*(\d+)\s*,\s*(\d+)\s*\))\s*/.exec(detail);
+			spec.forEach(function(c) {
 
+				if ( !isNaN(c) ) _const.push(c);
+				else
+				{
+					let tokens = c.split(':');
+					if ( tokens.length != 1 && tokens.length != 2 )
+						throw "invalid const definition";
 
+					// if there are two elements, 1st element is a type. 2nd element is a value
+					// if one, 1st element is a value, the type is string(default)
+					let _type = tokens.length == 1 ? "s" : tokens[0];
+					let _val  = tokens.length == 1 ? tokens[0] : tokens[1];
+
+					switch(_type)
+					{
+						case 's': _const.push(_val); break;
+						case 'b': _const.push(parseInt(_val, 2)); break;
+						case 'd': _const.push(parseInt(_val, 10)); break;
+						case 'h': _const.push(parseInt(_val, 16)); break;
+						case 'f': _const.push(parseFloat(_val)); break;
+						default:
+							throw "unsupported const type:" + _type;
+					}
+				}
+			});
 		}
-		else
-			return __knot_libs[spec.method];
+		catch(e)
+		{
+			throw "invalid const definition";
+		}
+
+		return _const;
 	}
-};
+}
 
 
 class Knot
@@ -419,6 +627,9 @@ class Knot
 			knot._localRefid = spec.refid;
 			knot._localRef = cman.refTable.addRef(spec.refid, {});
 
+			// const =============
+			knot._const = __knot_libs.parseConst(spec.const);
+
 			return knot;
 		}
 		catch(e)
@@ -427,12 +638,14 @@ class Knot
 		}
 	}
 
+	get minimum() { return this._minimum; }
+
 	knit(cman, skein, loop = 1)
 	{
 		let cycle = 0;
 		for ( var i = 0; i < loop; i++ )
 		{
-			this._knitImpl(cman, skein, cycle++);
+			this._knit(cman, skein, cycle++);
 		}
 	}
 
@@ -442,7 +655,7 @@ class Knot
 
 		while(skein.hasRemaining())
 		{
-			this._unknitImpl(cman, skein, cycle++);
+			this._unknit(cman, skein, cycle++);
 		}
 	}
 
@@ -456,14 +669,32 @@ class Knot
 			return function() { return sz; }
 	}
 
-	_calcIndex(cman, ref, idx, cycle)
+	_getValue(stitch, defref, defidx, cycle)
 	{
-		return cman.stitch.nextRefidx(ref.__refnum, idx, cycle);
+		try
+		{
+			let ref = defref || this._localRef;
+			let vv = undefined;
+
+			return ref ? stitch.getRefValue(ref.__refnum, defidx, cycle) : this._const[defidx];
+		}
+		catch(e)
+		{
+		}
+
+		return 0;
 	}
 
-	_safeVMap(cman, ref)
+	_setValue(stitch, val, defref, defidx, cycle)
 	{
-		return cman.stitch.refmemByNum(ref.__refnum);
+		try
+		{
+			let ref = defref || this._localRef;
+			if ( ref !== undefined ) stitch.setRefValue(ref.__refnum, val, defidx, cycle);
+		}
+		catch(e)
+		{
+		}
 	}
 
 }
@@ -500,37 +731,39 @@ class BitKnot extends Knot
 			offset += def.sz;
 		}
 
-		return new BitKnot(defs);
+		let knot = new BitKnot(defs);
+		knot._minimum = 1;
+
+		return knot;
 	}
 
-	_knitImpl(cman, skein, cycle)
+	_knit(cman, skein, cycle)
 	{
 		let bb = 0;
+		let stitch = cman.stitch;
 
 		for ( let i = 0; i < this._defs.length; i++ )
 		{
-			let mem = this._safeVMap(cman, this._defs[i].ref || this._localRef);
-			let idx = this._calcIndex(cman, this._defs[i].ref || this._localRef, this._defs[i].idx, cycle);
-			let vv = mem[idx] & this._defs[i].mask;
-			vv = this._defs[i].func(vv);
+			let vv = this._getValue(stitch, this._defs[i].ref, this._defs[i].idx, cycle);
+
+			vv = this._defs[i].func(vv & this._defs[i].mask);
 			bb |= vv << (8 - this._defs[i].offset - this._defs[i].sz);
 		}
 
 		skein.put(bb);
 	}
 
-	_unknitImpl(cman, skein, cycle)
+	_unknit(cman, skein, cycle)
 	{
 		let bb = skein.get();
+		let stitch = cman.stitch;
 
 		for ( let i = 0; i < this._defs.length; i++ )
 		{
 			let vv = bb >> (8 - this._defs[i].offset - this._defs[i].sz);
 			vv = vv & this._defs[i].mask;
 
-			let vmap = this._safeVMap(cman, this._defs[i].ref || this._localRef);
-			let idx = this._calcIndex(cman, this._defs[i].ref || this._localRef, this._defs[i].idx, cycle);
-			vmap[idx] = vv;
+			this._setValue(stitch, vv, this._defs[i].ref, this._defs[i].idx, cycle);
 		}
 	}
 }
@@ -545,6 +778,7 @@ class BinaryKnot extends Knot
 
 		let idxGlobalOffset = 0;
 		let idxRefOffset = {};
+		let minimum = 0;
 
 		while( (tokens = re.exec(defstr)) !== null )
 		{
@@ -557,131 +791,41 @@ class BinaryKnot extends Knot
 			def.idx = isNaN(tokens[4]) ? -1 : parseInt(tokens[4]);
 
 			defs.push(def);
+			minimum += def.sz;
 		}
 
-		return new BinaryKnot(defs, {idxGlobalOffset:idxGlobalOffset, idxRefOffset:idxRefOffset});
+		let knot = new BinaryKnot(defs, {idxGlobalOffset:idxGlobalOffset, idxRefOffset:idxRefOffset});
+		knot._minimum = minimum;
+
+		return knot;
 	}
 
-	_knitImpl(cman, skein, cycle)
+	_knit(cman, skein, cycle)
 	{
+		let stitch = cman.stitch;
+
 		for ( let i = 0; i < this._defs.length; i++ )
 		{
-			let mem = this._safeVMap(cman, this._defs[i].ref || this._localRef);
-			let idx = this._calcIndex(cman, this._defs[i].ref || this._localRef, this._defs[i].idx, cycle);
-			let val = mem[idx];
+			let vv = this._getValue(stitch, this._defs[i].ref, this._defs[i].idx, cycle);
+
 			skein.order = this._defs[i].bB ? nio.Skein.BIG_ENDIAN : nio.Skein.LITTLE_ENDIAN;
-			skein.putUInt(val, this._defs[i].sz);
+			skein.putUInt(vv, this._defs[i].sz);
 		}
 	}
 
-	_unknitImpl(cman, skein, cycle)
+	_unknit(cman, skein, cycle)
 	{
+		let stitch = cman.stitch;
+
 		for ( let i = 0; i < this._defs.length; i++ )
 		{
-			let mem = this._safeVMap(cman, this._defs[i].ref || this._localRef);
-
 			skein.order = this._defs[i].bB ? nio.Skein.BIG_ENDIAN : nio.Skein.LITTLE_ENDIAN;
+			let vv = skein.getUInt(this._defs[i].sz);
 
-			let val = skein.getUInt(this._defs[i].sz);
-			let idx = this._calcIndex(cman, this._defs[i].ref || this._localRef, this._defs[i].idx, cycle);
-			mem[idx] = val;
+			this._setValue(stitch, vv, this._defs[i].ref, this._defs[i].idx, cycle);
 		}
 	}
 
-}
-
-var __tool_libs = {
-
-	parseFlow: function(cman, spec)
-	{
-		if ( typeof spec === "string" )
-		{
-
-		}
-		else if ( spec.syntax !== undefined )
-		{
-			// KNOT
-			return Knot.ready(cman, spec);
-		}
-	}
-}
-
-
-class Tool
-{
-	constructor(spec)
-	{
-		this._spec = spec;
-	}
-
-	static ready(cman, spec, mode)
-	{
-		let tool = new Tool(spec);
-		tool._chunkModule = ChunkModuleKit.setup(spec.chunk);
-		tool._flow = [];
-
-		//tool._iterate = spec.iterate;
-		if ( spec.flow && spec.flow.length )
-		{
-			for ( var i = 0; i < spec.flow.length; i++ )
-			{
-				tool._flow.push(__tool_libs.parseFlow(cman, spec.flow[i]));
-			}
-		}
-		return tool;
-	}
-
-	get flow() { return this._flow; }
-
-	_chunk(cman, skein)
-	{
-		return this._chunkModule.chunk(cman, skein)
-	}
-
-	knit(cman, skein)
-	{
-		var pieceBuf = this._chunk(cman, skein);
-		for ( var i = 0; i < this._flow.length; i++ )
-		{
-			this._flow[i].knit(cman, pieceBuf);
-		}
-	}
-
-	unknit(cman, skein)
-	{
-		var pieceBuf = this._chunk(cman, skein);
-		for ( var i = 0; i < this._flow.length; i++ )
-		{
-			this._flow[i].unknit(cman, pieceBuf);
-		}
-	}
-
-	_compileFunctions(recipes)
-	{
-		var func = [];
-
-		// if "ref" is defined, data have to be parsed into a value
-		if ( recipes.mode === undefined && recipes.ref !== undefined )
-		{
-			recipes.mode = "bin.big_endian"; // TODO have to be set by default.
-		}
-
-		// 1st function is getting a value
-		if ( recipes.mode !== undefined )
-		{
-			var f = $knotFunctions[recipes.mode];
-			func.push(f.bind(this));
-		}
-
-		// 2nd, ref
-		var ref = recipes.ref;
-		if ( ref !== undefined )
-		{
-			func.push($knotFunctions["assign"].bind(this, ref));
-		}
-
-		return func;
-	}
 }
 
 class ChunkModuleKit

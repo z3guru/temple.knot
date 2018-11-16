@@ -1,0 +1,23 @@
+{
+  "environment":{
+    "version":"1.0"
+    , "protocol":"NONE"
+    , "comments":"MELSEC test"
+    , "author":"ZCUBE"
+    , "licenced":"CC-BY"
+  }
+  ,
+  "textures":{
+    "T1":{"process":[ "PP1" ], "comments":"Test..."}
+    , "T2":{"process":[ "PP1" ], "comments":"Test..."}
+    , "T3":{"process":[ "GroupTool" ], "comments":"Test..."}
+  }
+  ,
+  "tools":{
+    "REQ.BIN.SUBHEADER" :{ "knots":[{"syntax":"bin.b2[:0]", "const":["h:5000"]}] }
+    , "REQ.BIN.ROUTE.3E":{ "knots":[{"syntax":"bin.b1[:1]b2[:0]", "refid":"VAR1"}]}
+    , "REQ.BIN.DATALEN" :{ "knots":[{"syntax":"bin.b2[:0]", "refid":"DATALEN"}]}
+    , "REQ.BIN.TIMER"   :{ "knots":[{"syntax":"bin.b2[:0]", "refid":"TIMER"}]}
+    , "REQ.BIN.DATA"    :{ "knots":[{"syntax":"bin.b2[:1]b2[:0]", "refid":"VAR1"}]}
+  }
+}
